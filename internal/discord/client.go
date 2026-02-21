@@ -4,6 +4,36 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+type discordSession interface {
+	Open() error
+	Close() error
+	AddMessageCreateHandler(handler func(message *discordgo.MessageCreate))
+	ChannelMessageSend(channelID, content string) error
+}
+
+type discordGoSession struct {
+	session *discordgo.Session
+}
+
+func (discordSession *discordGoSession) Open() error {
+	return discordSession.session.Open()
+}
+
+func (discordSession *discordGoSession) Close() error {
+	return discordSession.session.Close()
+}
+
+func (discordSession *discordGoSession) AddMessageCreateHandler(handler func(message *discordgo.MessageCreate)) {
+	discordSession.session.AddHandler(func(_ *discordgo.Session, message *discordgo.MessageCreate) {
+		handler(message)
+	})
+}
+
+func (discordSession *discordGoSession) ChannelMessageSend(channelID, content string) error {
+	_, err := discordSession.session.ChannelMessageSend(channelID, content)
+	return err
+}
+
 type Message struct {
 	ID        string
 	ChannelID string
@@ -22,7 +52,7 @@ type Client interface {
 }
 
 type discordGoClient struct {
-	session *discordgo.Session
+	session discordSession
 }
 
 func NewDiscordGoClient(token string) (Client, error) {
@@ -32,7 +62,7 @@ func NewDiscordGoClient(token string) (Client, error) {
 		return nil, err
 	}
 
-	return &discordGoClient{session: session}, nil
+	return &discordGoClient{session: &discordGoSession{session: session}}, nil
 }
 
 func NewClient(token string) (Client, error) {
@@ -48,18 +78,22 @@ func (client *discordGoClient) Close() error {
 }
 
 func (client *discordGoClient) AddMessageCreateHandler(handler MessageCreateHandler) {
-	client.session.AddHandler(func(_ *discordgo.Session, message *discordgo.MessageCreate) {
+	client.session.AddMessageCreateHandler(func(message *discordgo.MessageCreate) {
+		authorID := ""
+		if message.Author != nil {
+			authorID = message.Author.ID
+		}
+
 		handler(Message{
 			ID:        message.ID,
 			ChannelID: message.ChannelID,
 			GuildID:   message.GuildID,
-			AuthorID:  message.Author.ID,
+			AuthorID:  authorID,
 			Content:   message.Content,
 		})
 	})
 }
 
 func (client *discordGoClient) SendMessage(channelID, content string) error {
-	_, err := client.session.ChannelMessageSend(channelID, content)
-	return err
+	return client.session.ChannelMessageSend(channelID, content)
 }

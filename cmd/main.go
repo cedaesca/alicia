@@ -18,14 +18,32 @@ var (
 )
 
 func parseAndValidateConfig() error {
-	flag.StringVar(&Token, "t", "", "Bot Token")
-	flag.Parse()
-
-	if strings.TrimSpace(Token) == "" {
-		return errors.New("missing bot token: pass it with -t")
+	token, err := parseAndValidateConfigFrom(flag.CommandLine, nil)
+	if err != nil {
+		return err
 	}
 
+	Token = token
 	return nil
+}
+
+func parseAndValidateConfigFrom(flagSet *flag.FlagSet, args []string) (string, error) {
+	if flagSet == nil {
+		return "", errors.New("missing flag set")
+	}
+
+	var token string
+	flagSet.StringVar(&token, "t", "", "Bot Token")
+
+	if err := flagSet.Parse(args); err != nil {
+		return "", err
+	}
+
+	if strings.TrimSpace(token) == "" {
+		return "", errors.New("missing bot token: pass it with -t")
+	}
+
+	return token, nil
 }
 
 func gracefulShutdown(application *app.Application, done chan bool) {

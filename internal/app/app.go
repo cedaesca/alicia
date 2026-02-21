@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/cedaesca/alicia/internal/discord"
 )
@@ -17,6 +19,10 @@ type Application struct {
 func NewApplication(ctx context.Context, token string) (*Application, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	if strings.TrimSpace(token) == "" {
+		return nil, errors.New("missing bot token")
 	}
 
 	logger := log.New(os.Stdout, "[alicia] ", log.LstdFlags)
