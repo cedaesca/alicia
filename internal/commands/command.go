@@ -29,6 +29,7 @@ func All(configStore NotificationConfigStore, messageSender MessageSender) []Com
 		NewSetChannelCommand(configStore, messageSender),
 		NewNotificationRoleCommand(configStore),
 		NewByMinutesCommand(configStore),
+		NewDailyCommand(configStore),
 		NewListCommand(configStore),
 		NewDeleteCommand(configStore),
 	}

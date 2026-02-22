@@ -16,6 +16,7 @@ type NotificationConfigStore interface {
 	SetChannel(ctx context.Context, guildID, channelID string) error
 	SetRole(ctx context.Context, guildID, roleID string) error
 	AddByMinutesNotification(ctx context.Context, guildID string, input ByMinutesNotificationInput) (string, error)
+	AddDailyNotification(ctx context.Context, guildID string, input DailyNotificationInput) (string, error)
 	GetGuildConfig(ctx context.Context, guildID string) (NotificationConfig, error)
 	ListGuildNotifications(ctx context.Context, guildID string) ([]ScheduledNotification, error)
 	DeleteNotification(ctx context.Context, guildID, notificationID string) error
@@ -38,6 +39,19 @@ type ByMinutesNotification struct {
 	Message      string `json:"message"`
 }
 
+type DailyNotificationInput struct {
+	BaseHour string
+	Title    string
+	Message  string
+}
+
+type DailyNotification struct {
+	ID       string `json:"id"`
+	BaseHour string `json:"base_hour"`
+	Title    string `json:"title"`
+	Message  string `json:"message"`
+}
+
 type ScheduledNotification struct {
 	ID                 string    `json:"id"`
 	GuildID            string    `json:"guild_id"`
@@ -53,6 +67,7 @@ type NotificationConfig struct {
 	ChannelID              string                  `json:"channel_id,omitempty"`
 	RoleID                 string                  `json:"role_id,omitempty"`
 	ByMinutesNotifications []ByMinutesNotification `json:"by_minutes_notifications,omitempty"`
+	DailyNotifications     []DailyNotification     `json:"daily_notifications,omitempty"`
 }
 
 type notificationConfigState struct {
@@ -166,6 +181,63 @@ func (store *jsonNotificationConfigStore) AddByMinutesNotification(_ context.Con
 	return id, nil
 }
 
+func (store *jsonNotificationConfigStore) AddDailyNotification(_ context.Context, guildID string, input DailyNotificationInput) (string, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	configState, err := store.loadConfigState()
+	if err != nil {
+		return "", err
+	}
+
+	notificationState, err := store.loadNotificationScheduleState()
+	if err != nil {
+		return "", err
+	}
+
+	config := configState.Guilds[guildID]
+
+	id, err := generateShortID()
+	if err != nil {
+		return "", err
+	}
+
+	config.DailyNotifications = append(config.DailyNotifications, DailyNotification{
+		ID:       id,
+		BaseHour: input.BaseHour,
+		Title:    input.Title,
+		Message:  input.Message,
+	})
+
+	nextNotificationAt, err := calculateInitialDailyNextNotificationAt(input.BaseHour, time.Now().UTC())
+	if err != nil {
+		return "", err
+	}
+
+	notificationState.Notifications = append(notificationState.Notifications, ScheduledNotification{
+		ID:                 id,
+		GuildID:            guildID,
+		Type:               "daily",
+		EveryMinutes:       0,
+		BaseHour:           input.BaseHour,
+		Title:              input.Title,
+		Message:            input.Message,
+		NextNotificationAt: nextNotificationAt,
+	})
+
+	configState.Guilds[guildID] = config
+
+	if err := store.saveConfigState(configState); err != nil {
+		return "", err
+	}
+
+	if err := store.saveNotificationScheduleState(notificationState); err != nil {
+		return "", err
+	}
+
+	return id, nil
+}
+
 func (store *jsonNotificationConfigStore) GetGuildConfig(_ context.Context, guildID string) (NotificationConfig, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -259,6 +331,16 @@ func (store *jsonNotificationConfigStore) DeleteNotification(_ context.Context, 
 	}
 
 	config.ByMinutesNotifications = filteredConfig
+	filteredDailyConfig := make([]DailyNotification, 0, len(config.DailyNotifications))
+	for _, notification := range config.DailyNotifications {
+		if notification.ID == notificationID {
+			continue
+		}
+
+		filteredDailyConfig = append(filteredDailyConfig, notification)
+	}
+
+	config.DailyNotifications = filteredDailyConfig
 	configState.Guilds[guildID] = config
 
 	if err := store.saveNotificationScheduleState(notificationState); err != nil {
@@ -284,14 +366,9 @@ func (store *jsonNotificationConfigStore) MarkNotificationSent(_ context.Context
 			continue
 		}
 
-		if notification.EveryMinutes <= 0 {
-			return errors.New("la notificación tiene un intervalo inválido")
-		}
-
-		nextNotificationAt := notification.NextNotificationAt
-		interval := time.Duration(notification.EveryMinutes) * time.Minute
-		for !nextNotificationAt.After(normalizedSentAt) {
-			nextNotificationAt = nextNotificationAt.Add(interval)
+		nextNotificationAt, err := calculateNextNotificationAt(*notification, normalizedSentAt)
+		if err != nil {
+			return err
 		}
 
 		notification.NextNotificationAt = nextNotificationAt
@@ -416,4 +493,53 @@ func calculateInitialNextNotificationAt(baseHour string, everyMinutes int, now t
 	}
 
 	return next, nil
+}
+
+func calculateInitialDailyNextNotificationAt(baseHour string, now time.Time) (time.Time, error) {
+	baseTime, err := time.Parse("15:04", baseHour)
+	if err != nil {
+		return time.Time{}, errors.New("el valor base_hour debe tener formato HH:MM (24h) en UTC")
+	}
+
+	normalizedNow := now.UTC()
+	next := time.Date(
+		normalizedNow.Year(),
+		normalizedNow.Month(),
+		normalizedNow.Day(),
+		baseTime.Hour(),
+		baseTime.Minute(),
+		0,
+		0,
+		time.UTC,
+	)
+
+	for !next.After(normalizedNow) {
+		next = next.Add(24 * time.Hour)
+	}
+
+	return next, nil
+}
+
+func calculateNextNotificationAt(notification ScheduledNotification, sentAt time.Time) (time.Time, error) {
+	nextNotificationAt := notification.NextNotificationAt
+
+	switch notification.Type {
+	case "daily":
+		for !nextNotificationAt.After(sentAt) {
+			nextNotificationAt = nextNotificationAt.Add(24 * time.Hour)
+		}
+		return nextNotificationAt, nil
+	case "byminutes":
+		if notification.EveryMinutes <= 0 {
+			return time.Time{}, errors.New("la notificación tiene un intervalo inválido")
+		}
+
+		interval := time.Duration(notification.EveryMinutes) * time.Minute
+		for !nextNotificationAt.After(sentAt) {
+			nextNotificationAt = nextNotificationAt.Add(interval)
+		}
+		return nextNotificationAt, nil
+	default:
+		return time.Time{}, errors.New("tipo de notificación no soportado")
+	}
 }

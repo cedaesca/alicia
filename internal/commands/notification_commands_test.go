@@ -13,6 +13,7 @@ type fakeNotificationConfigStore struct {
 	setChannelErr   error
 	setRoleErr      error
 	addByMinutesErr error
+	addDailyErr     error
 	listErr         error
 	deleteErr       error
 
@@ -23,6 +24,8 @@ type fakeNotificationConfigStore struct {
 	byMinutesGuildID  string
 	byMinutesInput    ByMinutesNotificationInput
 	byMinutesID       string
+	dailyInput        DailyNotificationInput
+	dailyID           string
 	notifications     []ScheduledNotification
 	deletedGuildID    string
 	deletedID         string
@@ -64,6 +67,20 @@ func (store *fakeNotificationConfigStore) AddByMinutesNotification(_ context.Con
 	}
 
 	return store.byMinutesID, nil
+}
+
+func (store *fakeNotificationConfigStore) AddDailyNotification(_ context.Context, guildID string, input DailyNotificationInput) (string, error) {
+	store.byMinutesGuildID = guildID
+	store.dailyInput = input
+	if store.addDailyErr != nil {
+		return "", store.addDailyErr
+	}
+
+	if store.dailyID == "" {
+		return "def456", nil
+	}
+
+	return store.dailyID, nil
 }
 
 func (store *fakeNotificationConfigStore) GetGuildConfig(_ context.Context, guildID string) (NotificationConfig, error) {
@@ -207,8 +224,8 @@ func TestNotificationRoleCommandExecute(t *testing.T) {
 
 func TestAllCommandsIncludesNotificationCommands(t *testing.T) {
 	all := All(&fakeNotificationConfigStore{}, nil)
-	if len(all) < 6 {
-		t.Fatalf("expected at least 6 commands, got %d", len(all))
+	if len(all) < 7 {
+		t.Fatalf("expected at least 7 commands, got %d", len(all))
 	}
 }
 
@@ -278,12 +295,55 @@ func TestByMinutesCommandExecute(t *testing.T) {
 	})
 }
 
+func TestDailyCommandExecute(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		store := &fakeNotificationConfigStore{dailyID: "d4e5f6"}
+		command := NewDailyCommand(store)
+
+		response, err := command.Execute(context.Background(), discord.Interaction{
+			GuildID: "guild-1",
+			Options: map[string]string{
+				"base_hour": "16:00",
+				"title":     "Cierre",
+				"message":   "Revisar pendientes",
+			},
+		})
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+
+		if response != "Notificación creada correctamente (hora base en UTC). ID: d4e5f6" {
+			t.Fatalf("unexpected response: %q", response)
+		}
+
+		if store.dailyInput.BaseHour != "16:00" || store.dailyInput.Title != "Cierre" || store.dailyInput.Message != "Revisar pendientes" {
+			t.Fatalf("unexpected daily payload: %+v", store.dailyInput)
+		}
+	})
+
+	t.Run("invalid base hour", func(t *testing.T) {
+		command := NewDailyCommand(&fakeNotificationConfigStore{})
+
+		_, err := command.Execute(context.Background(), discord.Interaction{
+			GuildID: "guild-1",
+			Options: map[string]string{
+				"base_hour": "99:00",
+				"title":     "Cierre",
+				"message":   "Revisar pendientes",
+			},
+		})
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+}
+
 func TestListCommandExecute(t *testing.T) {
 	t.Run("returns only id title frequency", func(t *testing.T) {
 		store := &fakeNotificationConfigStore{
 			notifications: []ScheduledNotification{
-				{ID: "b2", Title: "Segundo", EveryMinutes: 30},
-				{ID: "a1", Title: "Primero", EveryMinutes: 15},
+				{ID: "b2", Title: "Segundo", EveryMinutes: 30, Type: "byminutes"},
+				{ID: "a1", Title: "Primero", Type: "daily"},
 			},
 		}
 		command := NewListCommand(store)
@@ -293,7 +353,7 @@ func TestListCommandExecute(t *testing.T) {
 			t.Fatalf("expected nil error, got %v", err)
 		}
 
-		expected := "Notificaciones:\n- ID: a1 | Título: Primero | Frecuencia: cada 15 min\n- ID: b2 | Título: Segundo | Frecuencia: cada 30 min"
+		expected := "Notificaciones:\n- ID: a1 | Título: Primero | Tipo: daily | Frecuencia: diaria\n- ID: b2 | Título: Segundo | Tipo: byminutes | Frecuencia: cada 30 min"
 		if response != expected {
 			t.Fatalf("unexpected response: %q", response)
 		}

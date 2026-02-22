@@ -45,9 +45,30 @@ func (command *listCommand) Execute(ctx context.Context, interaction discord.Int
 	lines := make([]string, 0, len(notifications)+1)
 	lines = append(lines, "Notificaciones:")
 	for _, notification := range notifications {
-		frequency := fmt.Sprintf("cada %d min", notification.EveryMinutes)
-		lines = append(lines, fmt.Sprintf("- ID: %s | Título: %s | Frecuencia: %s", notification.ID, notification.Title, frequency))
+		frequency := formatFrequency(notification)
+		notificationType := formatNotificationType(notification)
+		lines = append(lines, fmt.Sprintf("- ID: %s | Título: %s | Tipo: %s | Frecuencia: %s", notification.ID, notification.Title, notificationType, frequency))
 	}
 
 	return strings.Join(lines, "\n"), nil
+}
+
+func formatFrequency(notification ScheduledNotification) string {
+	if notification.Type == "daily" {
+		return "diaria"
+	}
+
+	return fmt.Sprintf("cada %d min", notification.EveryMinutes)
+}
+
+func formatNotificationType(notification ScheduledNotification) string {
+	if notification.Type == "daily" {
+		return "daily"
+	}
+
+	if notification.Type == "byminutes" {
+		return "byminutes"
+	}
+
+	return "desconocido"
 }
