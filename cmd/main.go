@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"os"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -18,7 +19,7 @@ var (
 )
 
 func parseAndValidateConfig() error {
-	token, err := parseAndValidateConfigFrom(flag.CommandLine, nil)
+	token, err := parseAndValidateConfigFrom(flag.CommandLine, os.Args[1:])
 	if err != nil {
 		return err
 	}
