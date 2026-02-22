@@ -2,6 +2,8 @@ package discord
 
 import (
 	"errors"
+	"fmt"
+	"strconv"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -11,7 +13,8 @@ type discordSession interface {
 	Close() error
 	AddMessageCreateHandler(handler func(message *discordgo.MessageCreate))
 	AddInteractionCreateHandler(handler func(interaction *discordgo.InteractionCreate))
-	ApplicationCommandCreate(name, description string) (string, error)
+	ApplicationCommandCreate(command SlashCommand) (string, error)
+	ApplicationCommands() ([]RegisteredSlashCommand, error)
 	InteractionRespond(interaction *discordgo.Interaction, content string) error
 	ChannelMessageSend(channelID, content string) error
 }
@@ -40,24 +43,53 @@ func (discordSession *discordGoSession) AddInteractionCreateHandler(handler func
 	})
 }
 
-func (discordSession *discordGoSession) ApplicationCommandCreate(name, description string) (string, error) {
+func (discordSession *discordGoSession) ApplicationCommandCreate(command SlashCommand) (string, error) {
 	if discordSession.session.State == nil || discordSession.session.State.User == nil {
 		return "", errors.New("discord session user state is not initialized")
 	}
 
-	command, err := discordSession.session.ApplicationCommandCreate(
+	options := make([]*discordgo.ApplicationCommandOption, 0, len(command.Options))
+	for _, option := range command.Options {
+		options = append(options, &discordgo.ApplicationCommandOption{
+			Type:        toDiscordOptionType(option.Type),
+			Name:        option.Name,
+			Description: option.Description,
+			Required:    option.Required,
+		})
+	}
+
+	createdCommand, err := discordSession.session.ApplicationCommandCreate(
 		discordSession.session.State.User.ID,
 		"",
 		&discordgo.ApplicationCommand{
-			Name:        name,
-			Description: description,
+			Name:        command.Name,
+			Description: command.Description,
+			Options:     options,
 		},
 	)
 	if err != nil {
 		return "", err
 	}
 
-	return command.ID, nil
+	return createdCommand.ID, nil
+}
+
+func (discordSession *discordGoSession) ApplicationCommands() ([]RegisteredSlashCommand, error) {
+	if discordSession.session.State == nil || discordSession.session.State.User == nil {
+		return nil, errors.New("discord session user state is not initialized")
+	}
+
+	commands, err := discordSession.session.ApplicationCommands(discordSession.session.State.User.ID, "")
+	if err != nil {
+		return nil, err
+	}
+
+	registered := make([]RegisteredSlashCommand, 0, len(commands))
+	for _, command := range commands {
+		registered = append(registered, RegisteredSlashCommand{ID: command.ID, Name: command.Name})
+	}
+
+	return registered, nil
 }
 
 func (discordSession *discordGoSession) InteractionRespond(interaction *discordgo.Interaction, content string) error {
@@ -88,6 +120,27 @@ type MessageCreateHandler func(message Message)
 type SlashCommand struct {
 	Name        string
 	Description string
+	Options     []SlashCommandOption
+}
+
+type RegisteredSlashCommand struct {
+	ID   string
+	Name string
+}
+
+type SlashCommandOptionType string
+
+const (
+	SlashCommandOptionTypeString  SlashCommandOptionType = "string"
+	SlashCommandOptionTypeChannel SlashCommandOptionType = "channel"
+	SlashCommandOptionTypeRole    SlashCommandOptionType = "role"
+)
+
+type SlashCommandOption struct {
+	Name        string
+	Description string
+	Type        SlashCommandOptionType
+	Required    bool
 }
 
 type Interaction struct {
@@ -96,6 +149,7 @@ type Interaction struct {
 	ChannelID   string
 	GuildID     string
 	UserID      string
+	Options     map[string]string
 	raw         *discordgo.Interaction
 }
 
@@ -106,6 +160,7 @@ type Client interface {
 	Close() error
 	AddMessageCreateHandler(handler MessageCreateHandler)
 	AddInteractionCreateHandler(handler InteractionCreateHandler)
+	ListGlobalCommands() ([]RegisteredSlashCommand, error)
 	RegisterGlobalCommand(command SlashCommand) (string, error)
 	RespondToInteraction(interaction Interaction, content string) error
 	SendMessage(channelID, content string) error
@@ -165,7 +220,12 @@ func (client *discordGoClient) AddInteractionCreateHandler(handler InteractionCr
 			CommandName: interactionCreate.ApplicationCommandData().Name,
 			ChannelID:   interactionCreate.ChannelID,
 			GuildID:     interactionCreate.GuildID,
+			Options:     make(map[string]string),
 			raw:         interactionCreate.Interaction,
+		}
+
+		for _, option := range interactionCreate.ApplicationCommandData().Options {
+			interaction.Options[option.Name] = optionValueToString(option)
 		}
 
 		if interactionCreate.Member != nil && interactionCreate.Member.User != nil {
@@ -179,7 +239,11 @@ func (client *discordGoClient) AddInteractionCreateHandler(handler InteractionCr
 }
 
 func (client *discordGoClient) RegisterGlobalCommand(command SlashCommand) (string, error) {
-	return client.session.ApplicationCommandCreate(command.Name, command.Description)
+	return client.session.ApplicationCommandCreate(command)
+}
+
+func (client *discordGoClient) ListGlobalCommands() ([]RegisteredSlashCommand, error) {
+	return client.session.ApplicationCommands()
 }
 
 func (client *discordGoClient) RespondToInteraction(interaction Interaction, content string) error {
@@ -192,4 +256,36 @@ func (client *discordGoClient) RespondToInteraction(interaction Interaction, con
 
 func (client *discordGoClient) SendMessage(channelID, content string) error {
 	return client.session.ChannelMessageSend(channelID, content)
+}
+
+func toDiscordOptionType(optionType SlashCommandOptionType) discordgo.ApplicationCommandOptionType {
+	switch optionType {
+	case SlashCommandOptionTypeChannel:
+		return discordgo.ApplicationCommandOptionChannel
+	case SlashCommandOptionTypeRole:
+		return discordgo.ApplicationCommandOptionRole
+	default:
+		return discordgo.ApplicationCommandOptionString
+	}
+}
+
+func optionValueToString(option *discordgo.ApplicationCommandInteractionDataOption) string {
+	if option == nil {
+		return ""
+	}
+
+	switch value := option.Value.(type) {
+	case string:
+		return value
+	case float64:
+		return strconv.FormatInt(int64(value), 10)
+	case bool:
+		if value {
+			return "true"
+		}
+
+		return "false"
+	default:
+		return fmt.Sprintf("%v", value)
+	}
 }

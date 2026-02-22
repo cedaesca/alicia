@@ -18,6 +18,7 @@ type fakeSession struct {
 	sentContent           string
 	registeredName        string
 	registeredDescription string
+	registeredOptions     []SlashCommandOption
 
 	handler            func(message *discordgo.MessageCreate)
 	interactionHandler func(interaction *discordgo.InteractionCreate)
@@ -39,15 +40,20 @@ func (session *fakeSession) AddInteractionCreateHandler(handler func(interaction
 	session.interactionHandler = handler
 }
 
-func (session *fakeSession) ApplicationCommandCreate(name, description string) (string, error) {
-	session.registeredName = name
-	session.registeredDescription = description
+func (session *fakeSession) ApplicationCommandCreate(command SlashCommand) (string, error) {
+	session.registeredName = command.Name
+	session.registeredDescription = command.Description
+	session.registeredOptions = command.Options
 
 	if session.registerErr != nil {
 		return "", session.registerErr
 	}
 
 	return "command-id-1", nil
+}
+
+func (session *fakeSession) ApplicationCommands() ([]RegisteredSlashCommand, error) {
+	return nil, nil
 }
 
 func (session *fakeSession) InteractionRespond(interaction *discordgo.Interaction, content string) error {
@@ -208,7 +214,18 @@ func TestDiscordGoClientRegisterGlobalCommand(t *testing.T) {
 	session := &fakeSession{}
 	client := &discordGoClient{session: session}
 
-	commandID, err := client.RegisterGlobalCommand(SlashCommand{Name: "ping", Description: "Replies with Pong!"})
+	commandID, err := client.RegisterGlobalCommand(SlashCommand{
+		Name:        "setchannel",
+		Description: "Set notification channel",
+		Options: []SlashCommandOption{
+			{
+				Name:        "channel",
+				Description: "Channel",
+				Type:        SlashCommandOptionTypeChannel,
+				Required:    true,
+			},
+		},
+	})
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -217,8 +234,12 @@ func TestDiscordGoClientRegisterGlobalCommand(t *testing.T) {
 		t.Fatalf("expected command id command-id-1, got %q", commandID)
 	}
 
-	if session.registeredName != "ping" || session.registeredDescription != "Replies with Pong!" {
+	if session.registeredName != "setchannel" || session.registeredDescription != "Set notification channel" {
 		t.Fatalf("unexpected command registration payload: %q / %q", session.registeredName, session.registeredDescription)
+	}
+
+	if len(session.registeredOptions) != 1 || session.registeredOptions[0].Name != "channel" {
+		t.Fatalf("unexpected command options: %+v", session.registeredOptions)
 	}
 }
 
@@ -245,4 +266,52 @@ func TestDiscordGoClientRespondToInteraction(t *testing.T) {
 			t.Fatalf("expected response content hello, got %q", session.sentContent)
 		}
 	})
+}
+
+func TestDiscordGoClientAddInteractionCreateHandler(t *testing.T) {
+	session := &fakeSession{}
+	client := &discordGoClient{session: session}
+
+	var received Interaction
+	client.AddInteractionCreateHandler(func(interaction Interaction) {
+		received = interaction
+	})
+
+	if session.interactionHandler == nil {
+		t.Fatal("expected interaction handler to be registered")
+	}
+
+	session.interactionHandler(&discordgo.InteractionCreate{
+		Interaction: &discordgo.Interaction{
+			ID:        "interaction-1",
+			Type:      discordgo.InteractionApplicationCommand,
+			GuildID:   "guild-1",
+			ChannelID: "channel-1",
+			Member: &discordgo.Member{
+				User: &discordgo.User{ID: "user-1"},
+			},
+			Data: discordgo.ApplicationCommandInteractionData{
+				Name: "setchannel",
+				Options: []*discordgo.ApplicationCommandInteractionDataOption{
+					{
+						Name:  "channel",
+						Type:  discordgo.ApplicationCommandOptionChannel,
+						Value: "123456",
+					},
+				},
+			},
+		},
+	})
+
+	if received.CommandName != "setchannel" {
+		t.Fatalf("expected command setchannel, got %q", received.CommandName)
+	}
+
+	if received.UserID != "user-1" {
+		t.Fatalf("expected user id user-1, got %q", received.UserID)
+	}
+
+	if received.Options["channel"] != "123456" {
+		t.Fatalf("expected channel option 123456, got %q", received.Options["channel"])
+	}
 }

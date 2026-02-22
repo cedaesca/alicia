@@ -15,6 +15,7 @@ import (
 )
 
 const commandStateFilePath = "data/discord_commands.json"
+const notificationConfigFilePath = "data/notification_config.json"
 
 type commandState struct {
 	Commands map[string]string `json:"commands"`
@@ -44,8 +45,10 @@ func NewApplication(ctx context.Context, token string) (*Application, error) {
 		return nil, err
 	}
 
+	configStore := commands.NewJSONNotificationConfigStore(notificationConfigFilePath)
+
 	registeredCommands := make(map[string]commands.Command)
-	for _, command := range commands.All() {
+	for _, command := range commands.All(configStore) {
 		definition := command.Definition()
 		registeredCommands[definition.Name] = command
 	}
