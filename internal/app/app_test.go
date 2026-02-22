@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -20,6 +21,9 @@ type fakeDiscordClient struct {
 	closeErr           error
 	closeCh            chan struct{}
 	interactionHandler discord.InteractionCreateHandler
+	listCommandsErr    error
+	registeredCommands []discord.SlashCommand
+	existingCommands   []discord.RegisteredSlashCommand
 }
 
 func (client *fakeDiscordClient) Open() error {
@@ -41,12 +45,64 @@ func (client *fakeDiscordClient) AddInteractionCreateHandler(handler discord.Int
 	client.interactionHandler = handler
 }
 
+func (client *fakeDiscordClient) ListGlobalCommands() ([]discord.RegisteredSlashCommand, error) {
+	if client.listCommandsErr != nil {
+		return nil, client.listCommandsErr
+	}
+
+	return client.existingCommands, nil
+}
+
 func (client *fakeDiscordClient) RegisterGlobalCommand(command discord.SlashCommand) (string, error) {
+	client.registeredCommands = append(client.registeredCommands, command)
 	return "command-id", nil
 }
 
 func (client *fakeDiscordClient) RespondToInteraction(interaction discord.Interaction, content string) error {
 	return nil
+}
+
+type staticCommand struct {
+	definition discord.SlashCommand
+}
+
+func (command *staticCommand) Definition() discord.SlashCommand {
+	return command.definition
+}
+
+func (command *staticCommand) Execute(ctx context.Context, interaction discord.Interaction) (string, error) {
+	return "ok", nil
+}
+
+func TestSyncSlashCommandsUsesLocalStateAsSourceOfTruth(t *testing.T) {
+	tempDir := t.TempDir()
+
+	application := &Application{
+		ctx:           context.Background(),
+		logger:        log.New(io.Discard, "", 0),
+		discordClient: &fakeDiscordClient{},
+		commands: map[string]commands.Command{
+			"setchannel": &staticCommand{definition: discord.SlashCommand{Name: "setchannel", Description: "Set channel"}},
+		},
+		stateFilePath: filepath.Join(tempDir, "discord_commands.json"),
+	}
+
+	if err := os.MkdirAll(filepath.Dir(application.stateFilePath), 0o755); err != nil {
+		t.Fatalf("failed to create state dir: %v", err)
+	}
+
+	if err := os.WriteFile(application.stateFilePath, []byte(`{"commands":{"setchannel":"old-id"}}`), 0o644); err != nil {
+		t.Fatalf("failed to seed state file: %v", err)
+	}
+
+	if err := application.syncSlashCommands(); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	fakeClient := application.discordClient.(*fakeDiscordClient)
+	if len(fakeClient.registeredCommands) != 0 {
+		t.Fatalf("expected command not to be registered, got %d", len(fakeClient.registeredCommands))
+	}
 }
 
 func (client *fakeDiscordClient) SendMessage(channelID, content string) error {
