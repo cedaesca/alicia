@@ -8,11 +8,12 @@ import (
 )
 
 type setChannelCommand struct {
-	configStore NotificationConfigStore
+	configStore   NotificationConfigStore
+	messageSender MessageSender
 }
 
-func NewSetChannelCommand(configStore NotificationConfigStore) Command {
-	return &setChannelCommand{configStore: configStore}
+func NewSetChannelCommand(configStore NotificationConfigStore, messageSender MessageSender) Command {
+	return &setChannelCommand{configStore: configStore, messageSender: messageSender}
 }
 
 func (command *setChannelCommand) Definition() discord.SlashCommand {
@@ -38,6 +39,12 @@ func (command *setChannelCommand) Execute(ctx context.Context, interaction disco
 	channelID := interaction.Options["channel"]
 	if channelID == "" {
 		return "", MissingRequiredOptionError("channel")
+	}
+
+	if command.messageSender != nil {
+		if err := command.messageSender.SendMessage(channelID, "✅ Canal de notificaciones verificado."); err != nil {
+			return "", fmt.Errorf("no tengo acceso al canal seleccionado; verifica permisos y que el bot esté en el servidor")
+		}
 	}
 
 	if err := command.configStore.SetChannel(ctx, interaction.GuildID, channelID); err != nil {

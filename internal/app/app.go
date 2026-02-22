@@ -12,6 +12,7 @@ import (
 
 	"github.com/cedaesca/alicia/internal/commands"
 	"github.com/cedaesca/alicia/internal/discord"
+	"github.com/cedaesca/alicia/internal/scheduler"
 )
 
 const commandStateFilePath = "data/discord_commands.json"
@@ -22,11 +23,12 @@ type commandState struct {
 }
 
 type Application struct {
-	ctx           context.Context
-	logger        *log.Logger
-	discordClient discord.Client
-	commands      map[string]commands.Command
-	stateFilePath string
+	ctx                 context.Context
+	logger              *log.Logger
+	discordClient       discord.Client
+	commands            map[string]commands.Command
+	stateFilePath       string
+	notificationService *scheduler.NotificationService
 }
 
 func NewApplication(ctx context.Context, token string) (*Application, error) {
@@ -48,17 +50,18 @@ func NewApplication(ctx context.Context, token string) (*Application, error) {
 	configStore := commands.NewJSONNotificationConfigStore(notificationConfigFilePath)
 
 	registeredCommands := make(map[string]commands.Command)
-	for _, command := range commands.All(configStore) {
+	for _, command := range commands.All(configStore, discordClient) {
 		definition := command.Definition()
 		registeredCommands[definition.Name] = command
 	}
 
 	return &Application{
-		ctx:           ctx,
-		logger:        logger,
-		discordClient: discordClient,
-		commands:      registeredCommands,
-		stateFilePath: commandStateFilePath,
+		ctx:                 ctx,
+		logger:              logger,
+		discordClient:       discordClient,
+		commands:            registeredCommands,
+		stateFilePath:       commandStateFilePath,
+		notificationService: scheduler.NewNotificationService(ctx, logger, discordClient, configStore),
 	}, nil
 }
 
@@ -88,12 +91,20 @@ func (application *Application) Run() error {
 		return fmt.Errorf("sync slash commands: %w", err)
 	}
 
+	if application.notificationService != nil {
+		application.notificationService.Start()
+	}
+
 	application.logger.Println("Discord client is running")
 	return nil
 }
 
 func (application *Application) Shutdown(ctx context.Context) error {
 	application.logger.Println("Shutting down Discord client")
+
+	if application.notificationService != nil {
+		application.notificationService.Stop()
+	}
 
 	errChan := make(chan error, 1)
 	go func() {
