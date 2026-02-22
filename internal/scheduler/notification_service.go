@@ -11,6 +11,8 @@ import (
 	"github.com/cedaesca/alicia/internal/discord"
 )
 
+const startupStaleNotificationThreshold = 10 * time.Minute
+
 type NotificationService struct {
 	ctx           context.Context
 	logger        *log.Logger
@@ -46,14 +48,14 @@ func (service *NotificationService) Start() {
 		ticker := time.NewTicker(service.interval)
 		defer ticker.Stop()
 
-		service.processDueNotifications()
+		service.processDueNotifications(true)
 
 		for {
 			select {
 			case <-loopCtx.Done():
 				return
 			case <-ticker.C:
-				service.processDueNotifications()
+				service.processDueNotifications(false)
 			}
 		}
 	}()
@@ -65,7 +67,7 @@ func (service *NotificationService) Stop() {
 	}
 }
 
-func (service *NotificationService) processDueNotifications() {
+func (service *NotificationService) processDueNotifications(isStartup bool) {
 	now := time.Now().UTC()
 	dueNotifications, err := service.store.ListDueNotifications(service.ctx, now)
 	if err != nil {
@@ -74,6 +76,16 @@ func (service *NotificationService) processDueNotifications() {
 	}
 
 	for _, notification := range dueNotifications {
+		if isStartup && now.Sub(notification.NextNotificationAt.UTC()) > startupStaleNotificationThreshold {
+			if err := service.store.MarkNotificationSent(service.ctx, notification.ID, now); err != nil {
+				service.logger.Printf("failed to skip stale notification %s on startup: %v", notification.ID, err)
+				continue
+			}
+
+			service.logger.Printf("notification skipped on startup (stale): id=%s guild=%s", notification.ID, notification.GuildID)
+			continue
+		}
+
 		guildConfig, err := service.store.GetGuildConfig(service.ctx, notification.GuildID)
 		if err != nil {
 			service.logger.Printf("failed to load guild config for notification %s: %v", notification.ID, err)
