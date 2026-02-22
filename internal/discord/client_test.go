@@ -8,14 +8,19 @@ import (
 )
 
 type fakeSession struct {
-	openErr  error
-	closeErr error
-	sendErr  error
+	openErr     error
+	closeErr    error
+	sendErr     error
+	registerErr error
+	respondErr  error
 
-	sentChannelID string
-	sentContent   string
+	sentChannelID         string
+	sentContent           string
+	registeredName        string
+	registeredDescription string
 
-	handler func(message *discordgo.MessageCreate)
+	handler            func(message *discordgo.MessageCreate)
+	interactionHandler func(interaction *discordgo.InteractionCreate)
 }
 
 func (session *fakeSession) Open() error {
@@ -28,6 +33,26 @@ func (session *fakeSession) Close() error {
 
 func (session *fakeSession) AddMessageCreateHandler(handler func(message *discordgo.MessageCreate)) {
 	session.handler = handler
+}
+
+func (session *fakeSession) AddInteractionCreateHandler(handler func(interaction *discordgo.InteractionCreate)) {
+	session.interactionHandler = handler
+}
+
+func (session *fakeSession) ApplicationCommandCreate(name, description string) (string, error) {
+	session.registeredName = name
+	session.registeredDescription = description
+
+	if session.registerErr != nil {
+		return "", session.registerErr
+	}
+
+	return "command-id-1", nil
+}
+
+func (session *fakeSession) InteractionRespond(interaction *discordgo.Interaction, content string) error {
+	session.sentContent = content
+	return session.respondErr
 }
 
 func (session *fakeSession) ChannelMessageSend(channelID, content string) error {
@@ -175,6 +200,49 @@ func TestDiscordGoClientAddMessageCreateHandler(t *testing.T) {
 
 		if received.AuthorID != "" {
 			t.Fatalf("expected empty author id, got %q", received.AuthorID)
+		}
+	})
+}
+
+func TestDiscordGoClientRegisterGlobalCommand(t *testing.T) {
+	session := &fakeSession{}
+	client := &discordGoClient{session: session}
+
+	commandID, err := client.RegisterGlobalCommand(SlashCommand{Name: "ping", Description: "Replies with Pong!"})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	if commandID != "command-id-1" {
+		t.Fatalf("expected command id command-id-1, got %q", commandID)
+	}
+
+	if session.registeredName != "ping" || session.registeredDescription != "Replies with Pong!" {
+		t.Fatalf("unexpected command registration payload: %q / %q", session.registeredName, session.registeredDescription)
+	}
+}
+
+func TestDiscordGoClientRespondToInteraction(t *testing.T) {
+	t.Run("missing raw interaction", func(t *testing.T) {
+		client := &discordGoClient{session: &fakeSession{}}
+
+		err := client.RespondToInteraction(Interaction{}, "hello")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		session := &fakeSession{}
+		client := &discordGoClient{session: session}
+
+		err := client.RespondToInteraction(Interaction{raw: &discordgo.Interaction{}}, "hello")
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+
+		if session.sentContent != "hello" {
+			t.Fatalf("expected response content hello, got %q", session.sentContent)
 		}
 	})
 }

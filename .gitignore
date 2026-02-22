@@ -34,3 +34,4 @@ main
 
 data
 data/*
+data/discord_commands.json
