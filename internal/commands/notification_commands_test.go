@@ -13,6 +13,8 @@ type fakeNotificationConfigStore struct {
 	setChannelErr   error
 	setRoleErr      error
 	addByMinutesErr error
+	listErr         error
+	deleteErr       error
 
 	guildIDForChannel string
 	channelID         string
@@ -21,6 +23,9 @@ type fakeNotificationConfigStore struct {
 	byMinutesGuildID  string
 	byMinutesInput    ByMinutesNotificationInput
 	byMinutesID       string
+	notifications     []ScheduledNotification
+	deletedGuildID    string
+	deletedID         string
 }
 
 type fakeMessageSender struct {
@@ -67,6 +72,20 @@ func (store *fakeNotificationConfigStore) GetGuildConfig(_ context.Context, guil
 
 func (store *fakeNotificationConfigStore) ListDueNotifications(_ context.Context, now time.Time) ([]ScheduledNotification, error) {
 	return nil, nil
+}
+
+func (store *fakeNotificationConfigStore) ListGuildNotifications(_ context.Context, guildID string) ([]ScheduledNotification, error) {
+	if store.listErr != nil {
+		return nil, store.listErr
+	}
+
+	return store.notifications, nil
+}
+
+func (store *fakeNotificationConfigStore) DeleteNotification(_ context.Context, guildID, notificationID string) error {
+	store.deletedGuildID = guildID
+	store.deletedID = notificationID
+	return store.deleteErr
 }
 
 func (store *fakeNotificationConfigStore) MarkNotificationSent(_ context.Context, notificationID string, sentAt time.Time) error {
@@ -188,8 +207,8 @@ func TestNotificationRoleCommandExecute(t *testing.T) {
 
 func TestAllCommandsIncludesNotificationCommands(t *testing.T) {
 	all := All(&fakeNotificationConfigStore{}, nil)
-	if len(all) < 4 {
-		t.Fatalf("expected at least 4 commands, got %d", len(all))
+	if len(all) < 6 {
+		t.Fatalf("expected at least 6 commands, got %d", len(all))
 	}
 }
 
@@ -253,6 +272,73 @@ func TestByMinutesCommandExecute(t *testing.T) {
 				"message":       "Enviar reporte",
 			},
 		})
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+}
+
+func TestListCommandExecute(t *testing.T) {
+	t.Run("returns only id title frequency", func(t *testing.T) {
+		store := &fakeNotificationConfigStore{
+			notifications: []ScheduledNotification{
+				{ID: "b2", Title: "Segundo", EveryMinutes: 30},
+				{ID: "a1", Title: "Primero", EveryMinutes: 15},
+			},
+		}
+		command := NewListCommand(store)
+
+		response, err := command.Execute(context.Background(), discord.Interaction{GuildID: "guild-1"})
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+
+		expected := "Notificaciones:\n- ID: a1 | Título: Primero | Frecuencia: cada 15 min\n- ID: b2 | Título: Segundo | Frecuencia: cada 30 min"
+		if response != expected {
+			t.Fatalf("unexpected response: %q", response)
+		}
+	})
+
+	t.Run("empty list", func(t *testing.T) {
+		command := NewListCommand(&fakeNotificationConfigStore{})
+
+		response, err := command.Execute(context.Background(), discord.Interaction{GuildID: "guild-1"})
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+
+		if response != "No hay notificaciones configuradas." {
+			t.Fatalf("unexpected response: %q", response)
+		}
+	})
+}
+
+func TestDeleteCommandExecute(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		store := &fakeNotificationConfigStore{}
+		command := NewDeleteCommand(store)
+
+		response, err := command.Execute(context.Background(), discord.Interaction{
+			GuildID: "guild-1",
+			Options: map[string]string{"id": "abc123"},
+		})
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+
+		if response != "Notificación eliminada: abc123" {
+			t.Fatalf("unexpected response: %q", response)
+		}
+
+		if store.deletedGuildID != "guild-1" || store.deletedID != "abc123" {
+			t.Fatalf("unexpected delete payload: guild=%q id=%q", store.deletedGuildID, store.deletedID)
+		}
+	})
+
+	t.Run("missing id", func(t *testing.T) {
+		command := NewDeleteCommand(&fakeNotificationConfigStore{})
+
+		_, err := command.Execute(context.Background(), discord.Interaction{GuildID: "guild-1", Options: map[string]string{"id": " "}})
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}

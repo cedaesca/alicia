@@ -17,6 +17,8 @@ type NotificationConfigStore interface {
 	SetRole(ctx context.Context, guildID, roleID string) error
 	AddByMinutesNotification(ctx context.Context, guildID string, input ByMinutesNotificationInput) (string, error)
 	GetGuildConfig(ctx context.Context, guildID string) (NotificationConfig, error)
+	ListGuildNotifications(ctx context.Context, guildID string) ([]ScheduledNotification, error)
+	DeleteNotification(ctx context.Context, guildID, notificationID string) error
 	ListDueNotifications(ctx context.Context, now time.Time) ([]ScheduledNotification, error)
 	MarkNotificationSent(ctx context.Context, notificationID string, sentAt time.Time) error
 }
@@ -194,6 +196,76 @@ func (store *jsonNotificationConfigStore) ListDueNotifications(_ context.Context
 	}
 
 	return dueNotifications, nil
+}
+
+func (store *jsonNotificationConfigStore) ListGuildNotifications(_ context.Context, guildID string) ([]ScheduledNotification, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	state, err := store.loadNotificationScheduleState()
+	if err != nil {
+		return nil, err
+	}
+
+	notifications := make([]ScheduledNotification, 0)
+	for _, notification := range state.Notifications {
+		if notification.GuildID == guildID {
+			notifications = append(notifications, notification)
+		}
+	}
+
+	return notifications, nil
+}
+
+func (store *jsonNotificationConfigStore) DeleteNotification(_ context.Context, guildID, notificationID string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	configState, err := store.loadConfigState()
+	if err != nil {
+		return err
+	}
+
+	notificationState, err := store.loadNotificationScheduleState()
+	if err != nil {
+		return err
+	}
+
+	deleted := false
+	filteredScheduled := make([]ScheduledNotification, 0, len(notificationState.Notifications))
+	for _, notification := range notificationState.Notifications {
+		if notification.ID == notificationID && notification.GuildID == guildID {
+			deleted = true
+			continue
+		}
+
+		filteredScheduled = append(filteredScheduled, notification)
+	}
+
+	if !deleted {
+		return errors.New("notificación no encontrada")
+	}
+
+	notificationState.Notifications = filteredScheduled
+
+	config := configState.Guilds[guildID]
+	filteredConfig := make([]ByMinutesNotification, 0, len(config.ByMinutesNotifications))
+	for _, notification := range config.ByMinutesNotifications {
+		if notification.ID == notificationID {
+			continue
+		}
+
+		filteredConfig = append(filteredConfig, notification)
+	}
+
+	config.ByMinutesNotifications = filteredConfig
+	configState.Guilds[guildID] = config
+
+	if err := store.saveNotificationScheduleState(notificationState); err != nil {
+		return err
+	}
+
+	return store.saveConfigState(configState)
 }
 
 func (store *jsonNotificationConfigStore) MarkNotificationSent(_ context.Context, notificationID string, sentAt time.Time) error {
