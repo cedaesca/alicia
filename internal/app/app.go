@@ -15,11 +15,21 @@ import (
 	"github.com/cedaesca/alicia/internal/scheduler"
 )
 
-const commandStateFilePath = "data/discord_commands.json"
-const notificationConfigFilePath = "data/notification_config.json"
+const commandStateFileName = "discord_commands.json"
+const notificationConfigFileName = "notification_config.json"
+const notificationsFileName = "notifications.json"
+const dataDirectoryName = "data"
 
 type commandState struct {
 	Commands map[string]string `json:"commands"`
+}
+
+type notificationConfigCountState struct {
+	Guilds map[string]json.RawMessage `json:"guilds"`
+}
+
+type notificationScheduleCountState struct {
+	Notifications []json.RawMessage `json:"notifications"`
 }
 
 type Application struct {
@@ -42,12 +52,22 @@ func NewApplication(ctx context.Context, token string) (*Application, error) {
 
 	logger := log.New(os.Stdout, "[alicia] ", log.LstdFlags)
 
+	executablePath, executableErr := os.Executable()
+	if executableErr != nil {
+		logger.Printf("failed to resolve executable path, falling back to working directory: %v", executableErr)
+		executablePath = ""
+	}
+
+	resolvedStateFilePath := resolveDataFilePath(executablePath, commandStateFileName)
+	resolvedNotificationConfigFilePath := resolveDataFilePath(executablePath, notificationConfigFileName)
+	logDataFolderStatusAndCounts(logger, resolvedNotificationConfigFilePath)
+
 	discordClient, err := discord.NewDiscordGoClient(token)
 	if err != nil {
 		return nil, err
 	}
 
-	configStore := commands.NewJSONNotificationConfigStore(notificationConfigFilePath)
+	configStore := commands.NewJSONNotificationConfigStore(resolvedNotificationConfigFilePath)
 
 	registeredCommands := make(map[string]commands.Command)
 	for _, command := range commands.All(configStore, discordClient) {
@@ -60,9 +80,105 @@ func NewApplication(ctx context.Context, token string) (*Application, error) {
 		logger:              logger,
 		discordClient:       discordClient,
 		commands:            registeredCommands,
-		stateFilePath:       commandStateFilePath,
+		stateFilePath:       resolvedStateFilePath,
 		notificationService: scheduler.NewNotificationService(ctx, logger, discordClient, configStore),
 	}, nil
+}
+
+func resolveDataFilePath(executablePath string, fileName string) string {
+	dataDir := dataDirectoryName
+	if strings.TrimSpace(executablePath) != "" {
+		dataDir = filepath.Join(filepath.Dir(executablePath), dataDirectoryName)
+	}
+
+	return filepath.Join(dataDir, fileName)
+}
+
+func logDataFolderStatusAndCounts(logger *log.Logger, notificationConfigFilePath string) {
+	dataDir := filepath.Dir(notificationConfigFilePath)
+	dataDirInfo, err := os.Stat(dataDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			logger.Printf("Data folder not found: %s", dataDir)
+		} else {
+			logger.Printf("Data folder not found: %s (error: %v)", dataDir, err)
+		}
+	} else if !dataDirInfo.IsDir() {
+		logger.Printf("Data folder not found: %s (path exists but is not a folder)", dataDir)
+	} else {
+		logger.Printf("Data folder found: %s", dataDir)
+	}
+
+	notificationsFilePath := filepath.Join(dataDir, notificationsFileName)
+	guildCount, notificationCount, countErr := readGuildAndNotificationCounts(notificationConfigFilePath, notificationsFilePath)
+	if countErr != nil {
+		logger.Printf("failed to read notification counts: %v", countErr)
+	}
+
+	logger.Printf("%d guilds and %d total notifications", guildCount, notificationCount)
+}
+
+func readGuildAndNotificationCounts(notificationConfigFilePath, notificationsFilePath string) (int, int, error) {
+	guildCount, guildErr := readGuildCount(notificationConfigFilePath)
+	notificationCount, notificationErr := readNotificationCount(notificationsFilePath)
+
+	if guildErr == nil && notificationErr == nil {
+		return guildCount, notificationCount, nil
+	}
+
+	if guildErr != nil && notificationErr != nil {
+		return guildCount, notificationCount, fmt.Errorf("config count error: %v; schedule count error: %v", guildErr, notificationErr)
+	}
+
+	if guildErr != nil {
+		return guildCount, notificationCount, fmt.Errorf("config count error: %w", guildErr)
+	}
+
+	return guildCount, notificationCount, fmt.Errorf("schedule count error: %w", notificationErr)
+}
+
+func readGuildCount(notificationConfigFilePath string) (int, error) {
+	content, err := os.ReadFile(notificationConfigFilePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil
+		}
+
+		return 0, err
+	}
+
+	var state notificationConfigCountState
+	if err := json.Unmarshal(content, &state); err != nil {
+		return 0, err
+	}
+
+	if state.Guilds == nil {
+		return 0, nil
+	}
+
+	return len(state.Guilds), nil
+}
+
+func readNotificationCount(notificationsFilePath string) (int, error) {
+	content, err := os.ReadFile(notificationsFilePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil
+		}
+
+		return 0, err
+	}
+
+	var state notificationScheduleCountState
+	if err := json.Unmarshal(content, &state); err != nil {
+		return 0, err
+	}
+
+	if state.Notifications == nil {
+		return 0, nil
+	}
+
+	return len(state.Notifications), nil
 }
 
 func (application *Application) Context() context.Context {
