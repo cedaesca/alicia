@@ -225,3 +225,88 @@ func TestApplicationShutdown(t *testing.T) {
 		close(closeCh)
 	})
 }
+
+func TestResolveDataFilePath(t *testing.T) {
+	t.Run("uses executable directory when provided", func(t *testing.T) {
+		exePath := filepath.Join(t.TempDir(), "alicia.exe")
+		path := resolveDataFilePath(exePath, "notifications.json")
+		expected := filepath.Join(filepath.Dir(exePath), "data", "notifications.json")
+
+		if path != expected {
+			t.Fatalf("expected %q, got %q", expected, path)
+		}
+	})
+
+	t.Run("falls back to relative data directory when executable path missing", func(t *testing.T) {
+		path := resolveDataFilePath("", "notifications.json")
+		expected := filepath.Join("data", "notifications.json")
+
+		if path != expected {
+			t.Fatalf("expected %q, got %q", expected, path)
+		}
+	})
+}
+
+func TestReadGuildAndNotificationCounts(t *testing.T) {
+	t.Run("returns zero counts when files are missing", func(t *testing.T) {
+		tempDir := t.TempDir()
+
+		guildCount, notificationCount, err := readGuildAndNotificationCounts(
+			filepath.Join(tempDir, "notification_config.json"),
+			filepath.Join(tempDir, "notifications.json"),
+		)
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+
+		if guildCount != 0 || notificationCount != 0 {
+			t.Fatalf("expected 0 guilds and 0 notifications, got %d and %d", guildCount, notificationCount)
+		}
+	})
+
+	t.Run("returns counts from valid files", func(t *testing.T) {
+		tempDir := t.TempDir()
+		configPath := filepath.Join(tempDir, "notification_config.json")
+		notificationsPath := filepath.Join(tempDir, "notifications.json")
+
+		if err := os.WriteFile(configPath, []byte(`{"guilds":{"g1":{},"g2":{}}}`), 0o644); err != nil {
+			t.Fatalf("failed to write config file: %v", err)
+		}
+
+		if err := os.WriteFile(notificationsPath, []byte(`{"notifications":[{"id":"a"},{"id":"b"},{"id":"c"}]}`), 0o644); err != nil {
+			t.Fatalf("failed to write notifications file: %v", err)
+		}
+
+		guildCount, notificationCount, err := readGuildAndNotificationCounts(configPath, notificationsPath)
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+
+		if guildCount != 2 || notificationCount != 3 {
+			t.Fatalf("expected 2 guilds and 3 notifications, got %d and %d", guildCount, notificationCount)
+		}
+	})
+
+	t.Run("returns partial counts and error when one file is invalid", func(t *testing.T) {
+		tempDir := t.TempDir()
+		configPath := filepath.Join(tempDir, "notification_config.json")
+		notificationsPath := filepath.Join(tempDir, "notifications.json")
+
+		if err := os.WriteFile(configPath, []byte(`{"guilds":{"g1":{}}}`), 0o644); err != nil {
+			t.Fatalf("failed to write config file: %v", err)
+		}
+
+		if err := os.WriteFile(notificationsPath, []byte(`not-json`), 0o644); err != nil {
+			t.Fatalf("failed to write notifications file: %v", err)
+		}
+
+		guildCount, notificationCount, err := readGuildAndNotificationCounts(configPath, notificationsPath)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+
+		if guildCount != 1 || notificationCount != 0 {
+			t.Fatalf("expected 1 guild and 0 notifications, got %d and %d", guildCount, notificationCount)
+		}
+	})
+}
