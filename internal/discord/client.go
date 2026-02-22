@@ -132,6 +132,7 @@ type SlashCommandOptionType string
 
 const (
 	SlashCommandOptionTypeString  SlashCommandOptionType = "string"
+	SlashCommandOptionTypeInteger SlashCommandOptionType = "integer"
 	SlashCommandOptionTypeChannel SlashCommandOptionType = "channel"
 	SlashCommandOptionTypeRole    SlashCommandOptionType = "role"
 )
@@ -260,6 +261,8 @@ func (client *discordGoClient) SendMessage(channelID, content string) error {
 
 func toDiscordOptionType(optionType SlashCommandOptionType) discordgo.ApplicationCommandOptionType {
 	switch optionType {
+	case SlashCommandOptionTypeInteger:
+		return discordgo.ApplicationCommandOptionInteger
 	case SlashCommandOptionTypeChannel:
 		return discordgo.ApplicationCommandOptionChannel
 	case SlashCommandOptionTypeRole:

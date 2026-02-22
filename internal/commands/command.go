@@ -19,10 +19,18 @@ type Command interface {
 	Execute(ctx context.Context, interaction discord.Interaction) (string, error)
 }
 
-func All(configStore NotificationConfigStore) []Command {
+type MessageSender interface {
+	SendMessage(channelID, content string) error
+}
+
+func All(configStore NotificationConfigStore, messageSender MessageSender) []Command {
 	return []Command{
 		NewPingCommand(),
-		NewSetChannelCommand(configStore),
+		NewSetChannelCommand(configStore, messageSender),
 		NewNotificationRoleCommand(configStore),
+		NewByMinutesCommand(configStore),
+		NewDailyCommand(configStore),
+		NewListCommand(configStore),
+		NewDeleteCommand(configStore),
 	}
 }
