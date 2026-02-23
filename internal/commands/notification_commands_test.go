@@ -343,7 +343,7 @@ func TestDailyCommandExecute(t *testing.T) {
 }
 
 func TestListCommandExecute(t *testing.T) {
-	t.Run("returns only id title frequency", func(t *testing.T) {
+	t.Run("returns id title next notification and frequency", func(t *testing.T) {
 		store := &fakeNotificationConfigStore{
 			notifications: []ScheduledNotification{
 				{ID: "b2", Title: "Segundo", EveryMinutes: 30, Type: "byminutes"},
@@ -357,7 +357,7 @@ func TestListCommandExecute(t *testing.T) {
 			t.Fatalf("expected nil error, got %v", err)
 		}
 
-		expected := "Notificaciones:\n- ID: a1 | Título: Primero | Tipo: daily | Frecuencia: diaria\n- ID: b2 | Título: Segundo | Tipo: byminutes | Frecuencia: cada 30 min"
+		expected := "Notificaciones:\n- **(a1) - Primero** | Próxima notificación en: 0 horas 0 minutos 0 segundos | Frecuencia: diaria\n- **(b2) - Segundo** | Próxima notificación en: 0 horas 0 minutos 0 segundos | Frecuencia: cada 30 min"
 		if response != expected {
 			t.Fatalf("unexpected response: %q", response)
 		}
