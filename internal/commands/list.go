@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/cedaesca/alicia/internal/discord"
 )
@@ -44,10 +45,11 @@ func (command *listCommand) Execute(ctx context.Context, interaction discord.Int
 
 	lines := make([]string, 0, len(notifications)+1)
 	lines = append(lines, "Notificaciones:")
+	now := time.Now().UTC()
 	for _, notification := range notifications {
 		frequency := formatFrequency(notification)
-		notificationType := formatNotificationType(notification)
-		lines = append(lines, fmt.Sprintf("- ID: %s | Título: %s | Tipo: %s | Frecuencia: %s", notification.ID, notification.Title, notificationType, frequency))
+		timeUntil := formatTimeUntilNotification(notification.NextNotificationAt, now)
+		lines = append(lines, fmt.Sprintf("- **(%s) - %s** | Próxima en: %s | Frecuencia: %s", notification.ID, notification.Title, timeUntil, frequency))
 	}
 
 	return strings.Join(lines, "\n"), nil
@@ -61,14 +63,16 @@ func formatFrequency(notification ScheduledNotification) string {
 	return fmt.Sprintf("cada %d min", notification.EveryMinutes)
 }
 
-func formatNotificationType(notification ScheduledNotification) string {
-	if notification.Type == "daily" {
-		return "daily"
+func formatTimeUntilNotification(nextNotificationAt time.Time, now time.Time) string {
+	duration := nextNotificationAt.UTC().Sub(now)
+	if duration < 0 {
+		duration = 0
 	}
 
-	if notification.Type == "byminutes" {
-		return "byminutes"
-	}
+	totalSeconds := int64(duration.Seconds())
+	hours := totalSeconds / 3600
+	minutes := (totalSeconds % 3600) / 60
+	seconds := totalSeconds % 60
 
-	return "desconocido"
+	return fmt.Sprintf("%d horas, %d minutos y %d segundos", hours, minutes, seconds)
 }
