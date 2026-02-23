@@ -11,8 +11,6 @@ import (
 	"github.com/cedaesca/alicia/internal/discord"
 )
 
-const startupStaleNotificationThreshold = 10 * time.Minute
-
 type NotificationService struct {
 	ctx           context.Context
 	logger        *log.Logger
@@ -48,17 +46,25 @@ func (service *NotificationService) Start() {
 		ticker := time.NewTicker(service.interval)
 		defer ticker.Stop()
 
-		service.processDueNotifications(true)
+		service.processDueNotifications()
 
 		for {
 			select {
 			case <-loopCtx.Done():
 				return
 			case <-ticker.C:
-				service.processDueNotifications(false)
+				service.processDueNotifications()
 			}
 		}
 	}()
+}
+
+func (service *NotificationService) RecalculateSchedules(ctx context.Context, now time.Time) error {
+	if service.store == nil {
+		return nil
+	}
+
+	return service.store.RecalculateAllNextNotifications(ctx, now)
 }
 
 func (service *NotificationService) Stop() {
@@ -67,7 +73,7 @@ func (service *NotificationService) Stop() {
 	}
 }
 
-func (service *NotificationService) processDueNotifications(isStartup bool) {
+func (service *NotificationService) processDueNotifications() {
 	now := time.Now().UTC()
 	dueNotifications, err := service.store.ListDueNotifications(service.ctx, now)
 	if err != nil {
@@ -76,16 +82,6 @@ func (service *NotificationService) processDueNotifications(isStartup bool) {
 	}
 
 	for _, notification := range dueNotifications {
-		if isStartup && now.Sub(notification.NextNotificationAt.UTC()) > startupStaleNotificationThreshold {
-			if err := service.store.MarkNotificationSent(service.ctx, notification.ID, now); err != nil {
-				service.logger.Printf("failed to skip stale notification %s on startup: %v", notification.ID, err)
-				continue
-			}
-
-			service.logger.Printf("notification skipped on startup (stale): id=%s guild=%s", notification.ID, notification.GuildID)
-			continue
-		}
-
 		guildConfig, err := service.store.GetGuildConfig(service.ctx, notification.GuildID)
 		if err != nil {
 			service.logger.Printf("failed to load guild config for notification %s: %v", notification.ID, err)

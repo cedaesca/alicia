@@ -22,6 +22,7 @@ type NotificationConfigStore interface {
 	DeleteNotification(ctx context.Context, guildID, notificationID string) error
 	ListDueNotifications(ctx context.Context, now time.Time) ([]ScheduledNotification, error)
 	MarkNotificationSent(ctx context.Context, notificationID string, sentAt time.Time) error
+	RecalculateAllNextNotifications(ctx context.Context, now time.Time) error
 }
 
 type ByMinutesNotificationInput struct {
@@ -378,6 +379,30 @@ func (store *jsonNotificationConfigStore) MarkNotificationSent(_ context.Context
 	return errors.New("notificación no encontrada")
 }
 
+func (store *jsonNotificationConfigStore) RecalculateAllNextNotifications(_ context.Context, now time.Time) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	state, err := store.loadNotificationScheduleState()
+	if err != nil {
+		return err
+	}
+
+	normalizedNow := now.UTC()
+	for index := range state.Notifications {
+		notification := &state.Notifications[index]
+
+		next, err := calculateNextFromBaseHour(*notification, normalizedNow)
+		if err != nil {
+			return err
+		}
+
+		notification.NextNotificationAt = next
+	}
+
+	return store.saveNotificationScheduleState(state)
+}
+
 func (store *jsonNotificationConfigStore) loadConfigState() (notificationConfigState, error) {
 	content, err := os.ReadFile(store.configFilePath)
 	if err != nil {
@@ -539,6 +564,17 @@ func calculateNextNotificationAt(notification ScheduledNotification, sentAt time
 			nextNotificationAt = nextNotificationAt.Add(interval)
 		}
 		return nextNotificationAt, nil
+	default:
+		return time.Time{}, errors.New("tipo de notificación no soportado")
+	}
+}
+
+func calculateNextFromBaseHour(notification ScheduledNotification, now time.Time) (time.Time, error) {
+	switch notification.Type {
+	case "daily":
+		return calculateInitialDailyNextNotificationAt(notification.BaseHour, now)
+	case "byminutes":
+		return calculateInitialNextNotificationAt(notification.BaseHour, notification.EveryMinutes, now)
 	default:
 		return time.Time{}, errors.New("tipo de notificación no soportado")
 	}

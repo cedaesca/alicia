@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cedaesca/alicia/internal/commands"
 	"github.com/cedaesca/alicia/internal/discord"
@@ -205,6 +206,13 @@ func (application *Application) Run() error {
 	if err := application.syncSlashCommands(); err != nil {
 		_ = application.discordClient.Close()
 		return fmt.Errorf("sync slash commands: %w", err)
+	}
+
+	if application.notificationService != nil {
+		if err := application.notificationService.RecalculateSchedules(application.ctx, time.Now().UTC()); err != nil {
+			_ = application.discordClient.Close()
+			return fmt.Errorf("recalculate notification schedules: %w", err)
+		}
 	}
 
 	if application.notificationService != nil {

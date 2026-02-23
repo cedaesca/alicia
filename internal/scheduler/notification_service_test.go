@@ -92,7 +92,11 @@ func (store *fakeNotificationStore) DeleteNotification(_ context.Context, guildI
 	return nil
 }
 
-func TestProcessDueNotificationsStartupSkipsStale(t *testing.T) {
+func (store *fakeNotificationStore) RecalculateAllNextNotifications(_ context.Context, now time.Time) error {
+	return nil
+}
+
+func TestProcessDueNotificationsSendsDueNotification(t *testing.T) {
 	store := &fakeNotificationStore{
 		dueNotifications: []commands.ScheduledNotification{
 			{
@@ -114,10 +118,10 @@ func TestProcessDueNotificationsStartupSkipsStale(t *testing.T) {
 		store:         store,
 	}
 
-	service.processDueNotifications(true)
+	service.processDueNotifications()
 
-	if client.sendCalls != 0 {
-		t.Fatalf("expected no messages sent, got %d", client.sendCalls)
+	if client.sendCalls != 1 {
+		t.Fatalf("expected one message sent, got %d", client.sendCalls)
 	}
 
 	if store.markCalls != 1 {
@@ -129,7 +133,7 @@ func TestProcessDueNotificationsStartupSkipsStale(t *testing.T) {
 	}
 }
 
-func TestProcessDueNotificationsStartupSendsRecent(t *testing.T) {
+func TestProcessDueNotificationsSendsRecentNotification(t *testing.T) {
 	store := &fakeNotificationStore{
 		dueNotifications: []commands.ScheduledNotification{
 			{
@@ -150,7 +154,7 @@ func TestProcessDueNotificationsStartupSendsRecent(t *testing.T) {
 		store:         store,
 	}
 
-	service.processDueNotifications(true)
+	service.processDueNotifications()
 
 	if client.sendCalls != 1 {
 		t.Fatalf("expected one message sent, got %d", client.sendCalls)
@@ -186,7 +190,7 @@ func TestProcessDueNotificationsTickSendsStale(t *testing.T) {
 		store:         store,
 	}
 
-	service.processDueNotifications(false)
+	service.processDueNotifications()
 
 	if client.sendCalls != 1 {
 		t.Fatalf("expected one message sent, got %d", client.sendCalls)

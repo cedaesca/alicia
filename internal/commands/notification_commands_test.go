@@ -109,6 +109,10 @@ func (store *fakeNotificationConfigStore) MarkNotificationSent(_ context.Context
 	return nil
 }
 
+func (store *fakeNotificationConfigStore) RecalculateAllNextNotifications(_ context.Context, now time.Time) error {
+	return nil
+}
+
 func TestSetChannelCommandExecute(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		store := &fakeNotificationConfigStore{}
